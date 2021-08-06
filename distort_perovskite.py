@@ -66,7 +66,10 @@ class DistortPerovskite(object):
 
         self._build_primitivecell()
         self._build_supercell()
+#        self._build_network()
         self._kvecs = None
+        self._distorted_supercell = None
+
 
     def _build_primitivecell(self):
 
@@ -74,6 +77,8 @@ class DistortPerovskite(object):
         fractional_coordinate = None
         cartesian_coordinate = None
         element_nums = None
+
+        nat_primitive = None
 
         if self._structure_type == "perovskite":
             lattice_vector = np.array([[self._bond_length * 2.0, 0.0, 0.0],
@@ -84,7 +89,10 @@ class DistortPerovskite(object):
                                               [0.0, 0.0, 0.0],  # B cation
                                               [0.5, 0.0, 0.0],  # Anion 1
                                               [0.0, 0.5, 0.0],  # Anion 2
-                                              [0.0, 0.0, 0.5]])  # Anion 3
+                                              [0.0, 0.0, 0.5],  # Anion 3
+                                              [-0.5, 0.0, 0.0],  # Anion 1 in the next cell
+                                              [0.0, -0.5, 0.0],  # Anion 2 in the next cell
+                                              [0.0, 0.0, -0.5]])  # Anion 3 in the next cell
 
             element_nums = ([self._element_index[0],
                              self._element_index[1],
@@ -93,11 +101,13 @@ class DistortPerovskite(object):
                              self._element_index[2]])
 
             cartesian_coordinate = np.dot(fractional_coordinate, lattice_vector)
+            nat_primitive = 5
 
         self._lattice_vector = lattice_vector.transpose()
         self._fractional_coordinate = fractional_coordinate
         self._cartesian_coordinate = cartesian_coordinate
         self._element_nums = element_nums
+        self._nat_primitive = nat_primitive
 
     def _build_supercell(self):
 
@@ -109,20 +119,21 @@ class DistortPerovskite(object):
         else:
             raise RuntimeError("The dimension of cellsize must be 3.")
 
-        nat_primitive = len(self._fractional_coordinate)
-        fractional_coordinate = np.zeros((nat_primitive, 3))
+        natom = len(self._fractional_coordinate)
+        fractional_coordinate = np.zeros((natom, 3))
 
         lattice_vector = np.dot(self._lattice_vector, transformation_matrix)
 
         self._supercell = {'lattice_vector': lattice_vector,
                            'shifts': [],
-                           'fractional_coordinates': []}
+                           'fractional_coordinates': [],
+                           'cartesian_coordinates': []}
 
         for i in range(self._cellsize[0]):
             for j in range(self._cellsize[1]):
                 for k in range(self._cellsize[2]):
                     shift = [i, j, k]
-                    for iat in range(nat_primitive):
+                    for iat in range(natom):
                         x = (self._fractional_coordinate[iat][0] + float(i)) / float(self._cellsize[0])
                         y = (self._fractional_coordinate[iat][1] + float(j)) / float(self._cellsize[1])
                         z = (self._fractional_coordinate[iat][2] + float(k)) / float(self._cellsize[2])
@@ -132,13 +143,50 @@ class DistortPerovskite(object):
 
                     self._supercell['shifts'].append(shift)
                     self._supercell['fractional_coordinates'].append(copy.deepcopy(fractional_coordinate))
+                    self._supercell['cartesian_coordinates'].append(np.dot(fractional_coordinate, lattice_vector))
 
-    def _build_network(self):
-        network = {}
-
-        for ishift, structure in enumerate(self._supercell['fractional_coordinates']):
-            print(structure)
-
+    # def _build_network(self):
+    #     network = {}
+    #
+    #     if self._structure_type == "perovskite":
+    #
+    #         icount = 0
+    #
+    #         for shift, structure in zip(self._supercell['shifts'], self._supercell['fractional_coordinates']):
+    #
+    #             vertex_anions = []
+    #
+    #             vertex_anions.extend([[2, icount], [3, icount], [4, icount]])
+    #
+    #             shift_x = np.array(shift) + np.array([-1, 0, 0])
+    #             shift_y = np.array(shift) + np.array([0, -1, 0])
+    #             shift_z = np.array(shift) + np.array([0, 0, -1])
+    #
+    #             shift_x[0] = shift_x[0] % self._cellsize[0]
+    #             shift_y[1] = shift_y[1] % self._cellsize[1]
+    #             shift_z[2] = shift_z[2] % self._cellsize[2]
+    #
+    #             for j, shift2 in enumerate(self._supercell['shifts']):
+    #                 diff_shift = shift_x - np.array(shift2)
+    #                 if np.dot(diff_shift, diff_shift) == 0:
+    #                     vertex_anions.append([2, j])
+    #                     break
+    #
+    #             for j, shift2 in enumerate(self._supercell['shifts']):
+    #                 diff_shift = shift_y - np.array(shift2)
+    #                 if np.dot(diff_shift, diff_shift) == 0:
+    #                     vertex_anions.append([3, j])
+    #                     break
+    #
+    #             for j, shift2 in enumerate(self._supercell['shifts']):
+    #                 diff_shift = shift_z - np.array(shift2)
+    #                 if np.dot(diff_shift, diff_shift) == 0:
+    #                     vertex_anions.append([4, j])
+    #                     break
+    #
+    #             print(vertex_anions)
+    #
+    #             icount += 1
 
 
 
@@ -240,10 +288,17 @@ class DistortPerovskite(object):
 
         self._distorsion_angles = angles
 
-        disp = self._get_displacements(basis='F')
+        disp = self._get_displacements(basis='C')
 
-        adjusted_structure = self._adjust_network(disp)
+        new_lattice_vector, \
+        new_cartesian_coordinates, \
+        new_fractional_coordinates = self._adjust_network(disp)
 
+        self._distorted_supercell \
+            = {'lattice_vector': new_lattice_vector,
+                'shifts': self._supercell['shifts'],
+                'fractional_coordinates': new_fractional_coordinates[:,:self._nat_primitive,:],
+                'cartesian_coordinates': new_cartesian_coordinates[:,:self._nat_primitive,:]}
 
 
     def _get_displacements(self, rigid=True, basis='F', rodrigues=False):
@@ -265,21 +320,21 @@ class DistortPerovskite(object):
         :return: The displacements in the supercell in the input coordinate
         """
 
-        disp_super = np.zeros((len(self._cartesian_coordinate), 3, 8))
+        disp_super = np.zeros((len(self._supercell['shifts']), len(self._cartesian_coordinate), 3))
         rotation_axes = ['x', 'y', 'z']
+        nat = len(self._fractional_coordinate)
 
         if rigid:
-            nat_primitive = len(self._fractional_coordinate)
             if basis == 'F':
                 pos_now = copy.deepcopy(self._fractional_coordinate)
             elif basis == 'C':
                 pos_now = copy.deepcopy(self._cartesian_coordinate)
 
-            pos_new = np.zeros((nat_primitive, 3))
+            pos_new = np.zeros((nat, 3))
 
             if rodrigues:
 
-                disp_now = np.zeros((nat_primitive, 3))
+                disp_now = np.zeros((nat, 3))
 
                 omegavec = self._distorsion_angles[:]
                 norm_omegavec = np.sqrt(np.dot(omegavec, omegavec))
@@ -289,8 +344,8 @@ class DistortPerovskite(object):
 
                 for i in range(2):
                     pos_new[i, :] = pos_now[i, :]
-                for i in range(3):
-                    pos_new[i + 2, :] = np.dot(pos_new[i + 2, :], rotmat)
+                for i in range(2, nat):
+                    pos_new[i, :] = np.dot(pos_new[i, :], rotmat)
 
                 disp_now[:, :] = pos_new - pos_now
 
@@ -300,20 +355,20 @@ class DistortPerovskite(object):
                 #                                 * math.cos(math.pi * np.dot(entry, self._kvecs[iax]))
 
             else:
-                disp_now = np.zeros((nat_primitive, 3, 3))
+                disp_now = np.zeros((nat, 3, 3))
 
                 for iax, axis in enumerate(rotation_axes):
                     rotmat = self.get_rotation_matrix(axis,
                                                       self._distorsion_angles[iax]).transpose()
                     for i in range(2):
                         pos_new[i, :] = pos_now[i, :]
-                    for i in range(3):
-                        pos_new[i + 2, :] = np.dot(pos_now[i + 2, :], rotmat)
+                    for i in range(2, nat):
+                        pos_new[i, :] = np.dot(pos_now[i, :], rotmat)
                     disp_now[:, :, iax] = pos_new - pos_now
                     pos_now[:, :] = pos_new[:, :]
 
                     for ishift, entry in enumerate(self.get_supercell()['shifts']):
-                        disp_super[:, :, ishift] += disp_now[:, :, iax] \
+                        disp_super[ishift, :, :] += disp_now[:, :, iax] \
                                                      * math.cos(math.pi * np.dot(entry, self._kvecs[iax]))
 
         else:
@@ -325,8 +380,8 @@ class DistortPerovskite(object):
                 elif basis == 'C':
                     pos_new = copy.deepcopy(self._cartesian_coordinate)
 
-                for i in range(3):
-                    pos_new[i + 2, :] = np.dot(pos_new[i + 2, :], rotmat)
+                for i in range(2, nat):
+                    pos_new[i, :] = np.dot(pos_new[i, :], rotmat)
 
                 if basis == 'F':
                     disp_primitive = pos_new - self._fractional_coordinate
@@ -334,31 +389,223 @@ class DistortPerovskite(object):
                     disp_primitive = pos_new - self._cartesian_coordinate
 
                 for ishift, entry in enumerate(self.get_supercell()['shifts']):
-                    disp_super[:, :, ishift] += disp_primitive \
+                    disp_super[ishift, :, :] += disp_primitive \
                                                 * math.cos(math.pi * np.dot(entry, self._kvecs[iax]))
         return disp_super
 
     def _adjust_network(self, disp_orig):
 
-        for ishift, structure in enumerate(self._supercell['fractional_coordinates']):
-            print(structure + 0.5 * disp_orig[:, :, ishift])
+        # Brute force way to match the vertex sites
 
-        return None
+        shifted_cartesian = copy.deepcopy(self._supercell['cartesian_coordinates'])
+        shifted_cartesian += disp_orig
+
+        lattice_translation_array = np.array(self._supercell['shifts'])
+        neighbor_lists = np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]])
+
+        for index_centercell in range(len(self._supercell['cartesian_coordinates'])):
+
+            for idirec, shift_neighbor in enumerate(neighbor_lists):
+                lattice_tranlation_adjacent = lattice_translation_array[index_centercell] + shift_neighbor
+
+                index_adjacent_cell = None
+
+                for j, trans in enumerate(lattice_translation_array):
+                    diff = lattice_tranlation_adjacent - trans
+                    if np.dot(diff, diff) == 0:
+                        index_adjacent_cell = j
+                        break
+
+                if index_adjacent_cell is None:
+                    continue
+
+                xshift = shifted_cartesian[index_adjacent_cell, 5 + idirec, :] \
+                         - shifted_cartesian[index_centercell, 2 + idirec, :]
+
+                shifted_cartesian[index_adjacent_cell, :, :] -= xshift
+
+        terminal_lattice_x = np.array([self._cellsize[0]-1, 0, 0])
+        terminal_lattice_y = np.array([0, self._cellsize[1]-1, 0])
+        terminal_lattice_z = np.array([0, 0, self._cellsize[2]-1])
+
+        index_terminal = []
+
+        for j, trans in enumerate(lattice_translation_array):
+            diff = terminal_lattice_x - trans
+            if np.dot(diff, diff) == 0:
+                index_terminal.append(j)
+                break
+
+        for j, trans in enumerate(lattice_translation_array):
+            diff = terminal_lattice_y - trans
+            if np.dot(diff, diff) == 0:
+                index_terminal.append(j)
+                break
+
+        for j, trans in enumerate(lattice_translation_array):
+            diff = terminal_lattice_z - trans
+            if np.dot(diff, diff) == 0:
+                index_terminal.append(j)
+                break
+
+        new_lattice_vector = copy.deepcopy(self._supercell['lattice_vector'])
+        new_lattice_vector[0, :] = 2.0 * (shifted_cartesian[index_terminal[0], 1, :] - shifted_cartesian[0, 1, :])
+        new_lattice_vector[1, :] = 2.0 * (shifted_cartesian[index_terminal[1], 1, :] - shifted_cartesian[0, 1, :])
+        new_lattice_vector[2, :] = 2.0 * (shifted_cartesian[index_terminal[2], 1, :] - shifted_cartesian[0, 1, :])
+
+        inv_lattice_vector = np.linalg.inv(new_lattice_vector)
+        new_fractional_coordinate = np.dot(shifted_cartesian, inv_lattice_vector)
+
+        return new_lattice_vector, shifted_cartesian, new_fractional_coordinate
 
     def get_original_structure(self):
         return self._lattice_vector, \
                self._element_nums, \
                self._fractional_coordinate
 
+    def get_distorted_structure(self):
+        return self._distorted_supercell, self._element_nums * \
+               self._cellsize[0] * self._cellsize[1] * self._cellsize[2]
+
     def get_supercell(self):
         return self._supercell
 
 
+def check_supercell222():
+
+    # To pass all checks, the rotation angles must be small but should not be too small
+    # because the symmetry finder may think the structure is undistorted with the
+    # current value of symprec.
+
+    # Also if you increase bond_length, the appropriate value of the symprec would change.
+
+    bond_length = 2.0
+
+    obj = DistortPerovskite(elements=['La', 'Ni', 'O'], bond_length=bond_length, cellsize=[2, 2, 2])
+
+    tolerance = 0.5e-2 * bond_length
+
+    # a0a0a0 (#221)
+    obj.rotate_octahedra(angles=[0, 0, 0], tilt_patterns=['0', '0', '0'])
+    supercell, elems = obj.get_distorted_structure()
+    lattice = supercell['lattice_vector']
+    xfrac = np.reshape(supercell['fractional_coordinates'], (len(elems), 3))
+    cell = (lattice, xfrac, elems)
+    print(spglib.get_spacegroup(cell, symprec=tolerance))
+
+    # a0a0c+ (#127)
+    obj.rotate_octahedra(angles=[0, 0, 1], tilt_patterns=['0', '0', '+'])
+    supercell, elems = obj.get_distorted_structure()
+    lattice = supercell['lattice_vector']
+    xfrac = np.reshape(supercell['fractional_coordinates'], (len(elems), 3))
+    cell = (lattice, xfrac, elems)
+    print(spglib.get_spacegroup(cell, symprec=tolerance))
+
+    # a0b+b+ (#139)
+    obj.rotate_octahedra(angles=[0, 1, 1], tilt_patterns=['0', '+', '+'])
+    supercell, elems = obj.get_distorted_structure()
+    lattice = supercell['lattice_vector']
+    xfrac = np.reshape(supercell['fractional_coordinates'], (len(elems), 3))
+    cell = (lattice, xfrac, elems)
+    print(spglib.get_spacegroup(cell, symprec=tolerance))
+
+    # a+a+a+ (#204)
+    obj.rotate_octahedra(angles=[1, 1, 1], tilt_patterns=['+', '+', '+'])
+    supercell, elems = obj.get_distorted_structure()
+    lattice = supercell['lattice_vector']
+    xfrac = np.reshape(supercell['fractional_coordinates'], (len(elems), 3))
+    cell = (lattice, xfrac, elems)
+    print(spglib.get_spacegroup(cell, symprec=tolerance))
+
+    # a+b+c+ (#71)
+    obj.rotate_octahedra(angles=[1, 0.5, 2], tilt_patterns=['+', '+', '+'])
+    supercell, elems = obj.get_distorted_structure()
+    lattice = supercell['lattice_vector']
+    xfrac = np.reshape(supercell['fractional_coordinates'], (len(elems), 3))
+    cell = (lattice, xfrac, elems)
+    print(spglib.get_spacegroup(cell, symprec=tolerance))
+
+    # a0a0c- (#140)
+    obj.rotate_octahedra(angles=[0, 0, 1], tilt_patterns=['0', '0', '-'])
+    supercell, elems = obj.get_distorted_structure()
+    lattice = supercell['lattice_vector']
+    xfrac = np.reshape(supercell['fractional_coordinates'], (len(elems), 3))
+    cell = (lattice, xfrac, elems)
+    print(spglib.get_spacegroup(cell, symprec=tolerance))
+
+    # a0b-b- (#74)
+    obj.rotate_octahedra(angles=[0, 1, 1], tilt_patterns=['0', '-', '-'])
+    supercell, elems = obj.get_distorted_structure()
+    lattice = supercell['lattice_vector']
+    xfrac = np.reshape(supercell['fractional_coordinates'], (len(elems), 3))
+    cell = (lattice, xfrac, elems)
+    print(spglib.get_spacegroup(cell, symprec=tolerance))
+
+    # a-a-a- (#167)
+    obj.rotate_octahedra(angles=[1, 1, 1], tilt_patterns=['-', '-', '-'])
+    supercell, elems = obj.get_distorted_structure()
+    lattice = supercell['lattice_vector']
+    xfrac = np.reshape(supercell['fractional_coordinates'], (len(elems), 3))
+    cell = (lattice, xfrac, elems)
+    print(spglib.get_spacegroup(cell, symprec=tolerance))
+
+    # a0b-c- (#12)
+    obj.rotate_octahedra(angles=[0, 0.5, 1], tilt_patterns=['0', '-', '-'])
+    supercell, elems = obj.get_distorted_structure()
+    lattice = supercell['lattice_vector']
+    xfrac = np.reshape(supercell['fractional_coordinates'], (len(elems), 3))
+    cell = (lattice, xfrac, elems)
+    print(spglib.get_spacegroup(cell, symprec=tolerance))
+
+    # a-b-b- (#15)
+    obj.rotate_octahedra(angles=[1, 0.5, 0.5], tilt_patterns=['-', '-', '-'])
+    supercell, elems = obj.get_distorted_structure()
+    lattice = supercell['lattice_vector']
+    xfrac = np.reshape(supercell['fractional_coordinates'], (len(elems), 3))
+    cell = (lattice, xfrac, elems)
+    print(spglib.get_spacegroup(cell, symprec=tolerance))
+
+    # a-b-c- (#2)
+    obj.rotate_octahedra(angles=[1, 0.5, 2], tilt_patterns=['-', '-', '-'])
+    supercell, elems = obj.get_distorted_structure()
+    lattice = supercell['lattice_vector']
+    xfrac = np.reshape(supercell['fractional_coordinates'], (len(elems), 3))
+    cell = (lattice, xfrac, elems)
+    print(spglib.get_spacegroup(cell, symprec=tolerance))
+
+    # a0b+c- (#63)
+    obj.rotate_octahedra(angles=[0, 1, 0.5], tilt_patterns=['0', '+', '-'])
+    supercell, elems = obj.get_distorted_structure()
+    lattice = supercell['lattice_vector']
+    xfrac = np.reshape(supercell['fractional_coordinates'], (len(elems), 3))
+    cell = (lattice, xfrac, elems)
+    print(spglib.get_spacegroup(cell, symprec=tolerance))
+
+    # a+b-b- (#62)
+    obj.rotate_octahedra(angles=[1, 0.5, 0.5], tilt_patterns=['+', '-', '-'])
+    supercell, elems = obj.get_distorted_structure()
+    lattice = supercell['lattice_vector']
+    xfrac = np.reshape(supercell['fractional_coordinates'], (len(elems), 3))
+    cell = (lattice, xfrac, elems)
+    print(spglib.get_spacegroup(cell, symprec=tolerance))
+
+    # a+b-c- (#11)
+    obj.rotate_octahedra(angles=[1, 0.5, 2], tilt_patterns=['+', '-', '-'])
+    supercell, elems = obj.get_distorted_structure()
+    lattice = supercell['lattice_vector']
+    xfrac = np.reshape(supercell['fractional_coordinates'], (len(elems), 3))
+    cell = (lattice, xfrac, elems)
+    print(spglib.get_spacegroup(cell, symprec=tolerance))
+
+    # a+a+c- (#137)
+    obj.rotate_octahedra(angles=[1, 1, 0.5], tilt_patterns=['+', '+', '-'])
+    supercell, elems = obj.get_distorted_structure()
+    lattice = supercell['lattice_vector']
+    xfrac = np.reshape(supercell['fractional_coordinates'], (len(elems), 3))
+    cell = (lattice, xfrac, elems)
+    print(spglib.get_spacegroup(cell, symprec=tolerance))
+
 if __name__ == '__main__':
-    obj = DistortPerovskite(elements=['La', 'Ni', 'O'], bond_length=2.0)
-    # obj.rotate_single_octahedron(angles=[0, 0, 10])
-    obj.rotate_octahedra(angles=[5, 5, 5], tilt_patterns=['+', '+', '-'])
-    # supercell = obj._build_supercell()
-    #print(obj.get_original_structure())
-    #print(obj.get_supercell())
-    # print(supercell)
+
+    check_supercell222()
+
