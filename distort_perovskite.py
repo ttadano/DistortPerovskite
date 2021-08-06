@@ -3,6 +3,7 @@ import spglib
 import numpy as np
 import math
 import copy
+import collections
 
 
 class DistortPerovskite(object):
@@ -24,6 +25,9 @@ class DistortPerovskite(object):
         self._structure_type = None
         self._lattice_vector = None
         self._cellsize = cellsize
+
+        # If you increase bond_length, the appropriate value of the symprec would change.
+        self._symprec = 0.5e-2 * bond_length
 
         # If the length of elements is 3,
         # we assume that they form the ABX3 perovskite.
@@ -144,51 +148,6 @@ class DistortPerovskite(object):
                     self._supercell['shifts'].append(shift)
                     self._supercell['fractional_coordinates'].append(copy.deepcopy(fractional_coordinate))
                     self._supercell['cartesian_coordinates'].append(np.dot(fractional_coordinate, lattice_vector))
-
-    # def _build_network(self):
-    #     network = {}
-    #
-    #     if self._structure_type == "perovskite":
-    #
-    #         icount = 0
-    #
-    #         for shift, structure in zip(self._supercell['shifts'], self._supercell['fractional_coordinates']):
-    #
-    #             vertex_anions = []
-    #
-    #             vertex_anions.extend([[2, icount], [3, icount], [4, icount]])
-    #
-    #             shift_x = np.array(shift) + np.array([-1, 0, 0])
-    #             shift_y = np.array(shift) + np.array([0, -1, 0])
-    #             shift_z = np.array(shift) + np.array([0, 0, -1])
-    #
-    #             shift_x[0] = shift_x[0] % self._cellsize[0]
-    #             shift_y[1] = shift_y[1] % self._cellsize[1]
-    #             shift_z[2] = shift_z[2] % self._cellsize[2]
-    #
-    #             for j, shift2 in enumerate(self._supercell['shifts']):
-    #                 diff_shift = shift_x - np.array(shift2)
-    #                 if np.dot(diff_shift, diff_shift) == 0:
-    #                     vertex_anions.append([2, j])
-    #                     break
-    #
-    #             for j, shift2 in enumerate(self._supercell['shifts']):
-    #                 diff_shift = shift_y - np.array(shift2)
-    #                 if np.dot(diff_shift, diff_shift) == 0:
-    #                     vertex_anions.append([3, j])
-    #                     break
-    #
-    #             for j, shift2 in enumerate(self._supercell['shifts']):
-    #                 diff_shift = shift_z - np.array(shift2)
-    #                 if np.dot(diff_shift, diff_shift) == 0:
-    #                     vertex_anions.append([4, j])
-    #                     break
-    #
-    #             print(vertex_anions)
-    #
-    #             icount += 1
-
-
 
     @staticmethod
     def get_rotation_matrix(axis='z', angle=5.0):
@@ -458,6 +417,54 @@ class DistortPerovskite(object):
 
         return new_lattice_vector, shifted_cartesian, new_fractional_coordinate
 
+    def get_symmetrized_structure(self, to_primitive=False):
+        supercell, elems = self.get_distorted_structure()
+        lattice = supercell['lattice_vector']
+        xfrac = np.reshape(supercell['fractional_coordinates'], (len(elems), 3))
+        cell = (lattice, xfrac, elems)
+        syminfo = spglib.get_spacegroup(cell, symprec=self._symprec)
+        lattice, scaled_positions, numbers = spglib.standardize_cell(cell,
+                                                                     to_primitive=to_primitive,
+                                                                     no_idealize=False,
+                                                                     symprec=self._symprec)
+        return syminfo, lattice, scaled_positions, numbers
+
+    def write_vasp_poscar(self, fname, to_primitive=False):
+
+        syminfo, lattice, scaled_positions, numbers \
+            = self.get_symmetrized_structure(to_primitive=to_primitive)
+
+        formula = self._elements[0] + self._elements[1] + self._elements[2] + "3"
+
+        with open(fname, 'w') as f:
+
+            f.write("%s %s\n" % (syminfo, formula))
+            f.write("1.000\n")
+            for i in range(3):
+                for j in range(3):
+                    f.write("%20.14f" % lattice[i][j])
+                f.write('\n')
+
+            atomic_numbers_uniq = list(collections.OrderedDict.fromkeys(numbers))
+            num_species = []
+            for num in atomic_numbers_uniq:
+                f.write("%s " % self._element_list[num])
+                nspec = len(np.where(np.array(numbers) == num)[0])
+                num_species.append(nspec)
+            f.write('\n')
+            for elem in num_species:
+                f.write("%i " % elem)
+            f.write('\n')
+            f.write('Direct\n')
+
+            for num in atomic_numbers_uniq:
+                for i in range(len(scaled_positions)):
+                    if numbers[i] == num:
+                        f.write("%20.14f " % scaled_positions[i][0])
+                        f.write("%20.14f " % scaled_positions[i][1])
+                        f.write("%20.14f " % scaled_positions[i][2])
+                        f.write('\n')
+
     def get_original_structure(self):
         return self._lattice_vector, \
                self._element_nums, \
@@ -477,133 +484,99 @@ def check_supercell222():
     # because the symmetry finder may think the structure is undistorted with the
     # current value of symprec.
 
-    # Also if you increase bond_length, the appropriate value of the symprec would change.
-
-    bond_length = 2.0
-
-    obj = DistortPerovskite(elements=['La', 'Ni', 'O'], bond_length=bond_length, cellsize=[2, 2, 2])
-
-    tolerance = 0.5e-2 * bond_length
-
+    obj = DistortPerovskite(elements=['La', 'Ni', 'O'], bond_length=1.93, cellsize=[2, 2, 2])
+    to_primitive = True
     # a0a0a0 (#221)
     obj.rotate_octahedra(angles=[0, 0, 0], tilt_patterns=['0', '0', '0'])
-    supercell, elems = obj.get_distorted_structure()
-    lattice = supercell['lattice_vector']
-    xfrac = np.reshape(supercell['fractional_coordinates'], (len(elems), 3))
-    cell = (lattice, xfrac, elems)
-    print(spglib.get_spacegroup(cell, symprec=tolerance))
+    syminfo, _, _, _ = obj.get_symmetrized_structure()
+    obj.write_vasp_poscar("a0a0a0.POSCAR.vasp", to_primitive=to_primitive)
+    print(syminfo)
 
     # a0a0c+ (#127)
     obj.rotate_octahedra(angles=[0, 0, 1], tilt_patterns=['0', '0', '+'])
-    supercell, elems = obj.get_distorted_structure()
-    lattice = supercell['lattice_vector']
-    xfrac = np.reshape(supercell['fractional_coordinates'], (len(elems), 3))
-    cell = (lattice, xfrac, elems)
-    print(spglib.get_spacegroup(cell, symprec=tolerance))
+    syminfo, _, _, _ = obj.get_symmetrized_structure()
+    obj.write_vasp_poscar("a0a0c+.POSCAR.vasp", to_primitive=to_primitive)
+
+    print(syminfo)
 
     # a0b+b+ (#139)
     obj.rotate_octahedra(angles=[0, 1, 1], tilt_patterns=['0', '+', '+'])
-    supercell, elems = obj.get_distorted_structure()
-    lattice = supercell['lattice_vector']
-    xfrac = np.reshape(supercell['fractional_coordinates'], (len(elems), 3))
-    cell = (lattice, xfrac, elems)
-    print(spglib.get_spacegroup(cell, symprec=tolerance))
+    syminfo, _, _, _ = obj.get_symmetrized_structure()
+    obj.write_vasp_poscar("a0b+b+.POSCAR.vasp", to_primitive=to_primitive)
+
+    print(syminfo)
 
     # a+a+a+ (#204)
     obj.rotate_octahedra(angles=[1, 1, 1], tilt_patterns=['+', '+', '+'])
-    supercell, elems = obj.get_distorted_structure()
-    lattice = supercell['lattice_vector']
-    xfrac = np.reshape(supercell['fractional_coordinates'], (len(elems), 3))
-    cell = (lattice, xfrac, elems)
-    print(spglib.get_spacegroup(cell, symprec=tolerance))
+    syminfo, _, _, _ = obj.get_symmetrized_structure()
+    obj.write_vasp_poscar("a+a+a+.POSCAR.vasp", to_primitive=to_primitive)
+    print(syminfo)
 
     # a+b+c+ (#71)
     obj.rotate_octahedra(angles=[1, 0.5, 2], tilt_patterns=['+', '+', '+'])
-    supercell, elems = obj.get_distorted_structure()
-    lattice = supercell['lattice_vector']
-    xfrac = np.reshape(supercell['fractional_coordinates'], (len(elems), 3))
-    cell = (lattice, xfrac, elems)
-    print(spglib.get_spacegroup(cell, symprec=tolerance))
+    syminfo, _, _, _ = obj.get_symmetrized_structure()
+    obj.write_vasp_poscar("a+b+c+.POSCAR.vasp", to_primitive=to_primitive)
+    print(syminfo)
 
     # a0a0c- (#140)
     obj.rotate_octahedra(angles=[0, 0, 1], tilt_patterns=['0', '0', '-'])
-    supercell, elems = obj.get_distorted_structure()
-    lattice = supercell['lattice_vector']
-    xfrac = np.reshape(supercell['fractional_coordinates'], (len(elems), 3))
-    cell = (lattice, xfrac, elems)
-    print(spglib.get_spacegroup(cell, symprec=tolerance))
+    syminfo, _, _, _ = obj.get_symmetrized_structure()
+    obj.write_vasp_poscar("a0a0c-.POSCAR.vasp", to_primitive=to_primitive)
+    print(syminfo)
 
     # a0b-b- (#74)
     obj.rotate_octahedra(angles=[0, 1, 1], tilt_patterns=['0', '-', '-'])
-    supercell, elems = obj.get_distorted_structure()
-    lattice = supercell['lattice_vector']
-    xfrac = np.reshape(supercell['fractional_coordinates'], (len(elems), 3))
-    cell = (lattice, xfrac, elems)
-    print(spglib.get_spacegroup(cell, symprec=tolerance))
+    syminfo, _, _, _ = obj.get_symmetrized_structure()
+    obj.write_vasp_poscar("a0b-b-.POSCAR.vasp", to_primitive=to_primitive)
+    print(syminfo)
 
     # a-a-a- (#167)
     obj.rotate_octahedra(angles=[1, 1, 1], tilt_patterns=['-', '-', '-'])
-    supercell, elems = obj.get_distorted_structure()
-    lattice = supercell['lattice_vector']
-    xfrac = np.reshape(supercell['fractional_coordinates'], (len(elems), 3))
-    cell = (lattice, xfrac, elems)
-    print(spglib.get_spacegroup(cell, symprec=tolerance))
+    syminfo, _, _, _ = obj.get_symmetrized_structure()
+    obj.write_vasp_poscar("a-a-a-.POSCAR.vasp", to_primitive=to_primitive)
+    print(syminfo)
 
     # a0b-c- (#12)
     obj.rotate_octahedra(angles=[0, 0.5, 1], tilt_patterns=['0', '-', '-'])
-    supercell, elems = obj.get_distorted_structure()
-    lattice = supercell['lattice_vector']
-    xfrac = np.reshape(supercell['fractional_coordinates'], (len(elems), 3))
-    cell = (lattice, xfrac, elems)
-    print(spglib.get_spacegroup(cell, symprec=tolerance))
+    syminfo, _, _, _ = obj.get_symmetrized_structure()
+    obj.write_vasp_poscar("a0b-c-.POSCAR.vasp", to_primitive=to_primitive)
+    print(syminfo)
 
     # a-b-b- (#15)
     obj.rotate_octahedra(angles=[1, 0.5, 0.5], tilt_patterns=['-', '-', '-'])
-    supercell, elems = obj.get_distorted_structure()
-    lattice = supercell['lattice_vector']
-    xfrac = np.reshape(supercell['fractional_coordinates'], (len(elems), 3))
-    cell = (lattice, xfrac, elems)
-    print(spglib.get_spacegroup(cell, symprec=tolerance))
+    syminfo, _, _, _ = obj.get_symmetrized_structure()
+    obj.write_vasp_poscar("a-b-b-.POSCAR.vasp", to_primitive=to_primitive)
+    print(syminfo)
 
     # a-b-c- (#2)
     obj.rotate_octahedra(angles=[1, 0.5, 2], tilt_patterns=['-', '-', '-'])
-    supercell, elems = obj.get_distorted_structure()
-    lattice = supercell['lattice_vector']
-    xfrac = np.reshape(supercell['fractional_coordinates'], (len(elems), 3))
-    cell = (lattice, xfrac, elems)
-    print(spglib.get_spacegroup(cell, symprec=tolerance))
+    syminfo, _, _, _ = obj.get_symmetrized_structure()
+    obj.write_vasp_poscar("a-b-c-.POSCAR.vasp", to_primitive=to_primitive)
+    print(syminfo)
 
     # a0b+c- (#63)
     obj.rotate_octahedra(angles=[0, 1, 0.5], tilt_patterns=['0', '+', '-'])
-    supercell, elems = obj.get_distorted_structure()
-    lattice = supercell['lattice_vector']
-    xfrac = np.reshape(supercell['fractional_coordinates'], (len(elems), 3))
-    cell = (lattice, xfrac, elems)
-    print(spglib.get_spacegroup(cell, symprec=tolerance))
+    syminfo, _, _, _ = obj.get_symmetrized_structure()
+    obj.write_vasp_poscar("a0b+c-.POSCAR.vasp", to_primitive=to_primitive)
+    print(syminfo)
 
     # a+b-b- (#62)
     obj.rotate_octahedra(angles=[1, 0.5, 0.5], tilt_patterns=['+', '-', '-'])
-    supercell, elems = obj.get_distorted_structure()
-    lattice = supercell['lattice_vector']
-    xfrac = np.reshape(supercell['fractional_coordinates'], (len(elems), 3))
-    cell = (lattice, xfrac, elems)
-    print(spglib.get_spacegroup(cell, symprec=tolerance))
+    syminfo, _, _, _ = obj.get_symmetrized_structure()
+    obj.write_vasp_poscar("a+b-b-.POSCAR.vasp", to_primitive=to_primitive)
+    print(syminfo)
 
     # a+b-c- (#11)
     obj.rotate_octahedra(angles=[1, 0.5, 2], tilt_patterns=['+', '-', '-'])
-    supercell, elems = obj.get_distorted_structure()
-    lattice = supercell['lattice_vector']
-    xfrac = np.reshape(supercell['fractional_coordinates'], (len(elems), 3))
-    cell = (lattice, xfrac, elems)
-    print(spglib.get_spacegroup(cell, symprec=tolerance))
+    syminfo, _, _, _ = obj.get_symmetrized_structure()
+    obj.write_vasp_poscar("a+b-c-.POSCAR.vasp", to_primitive=to_primitive)
+    print(syminfo)
 
     # a+a+c- (#137)
     obj.rotate_octahedra(angles=[1, 1, 0.5], tilt_patterns=['+', '+', '-'])
-    supercell, elems = obj.get_distorted_structure()
-    lattice = supercell['lattice_vector']
-    xfrac = np.reshape(supercell['fractional_coordinates'], (len(elems), 3))
-    cell = (lattice, xfrac, elems)
-    print(spglib.get_spacegroup(cell, symprec=tolerance))
+    syminfo, _, _, _ = obj.get_symmetrized_structure()
+    obj.write_vasp_poscar("a+a+c-.POSCAR.vasp", to_primitive=to_primitive)
+    print(syminfo)
 
 if __name__ == '__main__':
 
