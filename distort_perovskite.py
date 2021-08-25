@@ -1,3 +1,4 @@
+import argparse
 import collections
 import copy
 import math
@@ -23,6 +24,7 @@ class DistortPerovskite(object):
       Currently, only cellsize=[2,2,2] is supported.
       The length of list should be 3.
     """
+
     def __init__(self,
                  elements=None,
                  bond_length=2.0,
@@ -207,7 +209,7 @@ class DistortPerovskite(object):
 
         return rotmat
 
-    def rotate_octahedra(self, angles, tilt_patterns):
+    def rotate_octahedra(self, angles, tilt_pattern):
         """Rotate BX6 octahedra and subsequently adjust the positions to
         recover the connectivity of the octahedral network.
 
@@ -219,31 +221,31 @@ class DistortPerovskite(object):
           The angles should be as small as ~1; otherwise, the distorted structure
           may not hold the expected space group symmetry.
 
-        tilt_patterns: list[str]
+        tilt_pattern: list[str]
           The array defining the tilting pattern. If the Glazer notation is "a-a-a-",
-          `tilt_patterns` should be ['-', '-', '-']. Each element of tilt_patterns
+          `tilt_pattern` should be ['-', '-', '-']. Each element of tilt_patterns
           should be either '0', '+', or '-'.
 
         Notes
         -----
-        When an entry of `angles` is 0, the corresponding element in `tilt_patterns`
-        is forced to be '0'. Conversely, when an entry of `tilt_patterns` is '0',
+        When an entry of `angles` is 0, the corresponding element in `tilt_pattern`
+        is forced to be '0'. Conversely, when an entry of `tilt_pattern` is '0',
         the corresponding entry in `angles` is forced to be 0.
 
         Examples
         --------
         > obj = DistortPerovskite(elements=['Sr', 'Ti', 'O'], bond_length=1.95)
-        > obj.rotate_octahedra(angles=[1, 1, 1], tilt_patterns=['-', '-', '-']) # a-a-a-
-        > obj.rotate_octahedra(angles=[0, 1, 1], tilt_patterns=['0', '-', '-']) # a0b-b-
-        > obj.rotate_octahedra(angles=[1, 0.5, 2], tilt_patterns=['+', '-', '-']) # a+b-c-
+        > obj.rotate_octahedra(angles=[1, 1, 1], tilt_pattern=['-', '-', '-']) # a-a-a-
+        > obj.rotate_octahedra(angles=[0, 1, 1], tilt_pattern=['0', '-', '-']) # a0b-b-
+        > obj.rotate_octahedra(angles=[1, 0.5, 2], tilt_pattern=['+', '-', '-']) # a+b-c-
         """
 
-        if len(angles) != 3 or len(tilt_patterns) != 3:
-            raise RuntimeError("The number of entries of angles and tilt_patterns must be 3.")
+        if len(angles) != 3 or len(tilt_pattern) != 3:
+            raise RuntimeError("The number of entries of angles and tilt_pattern must be 3.")
 
         self._kvecs = []
 
-        for i, pattern in enumerate(tilt_patterns):
+        for i, pattern in enumerate(tilt_pattern):
             if angles[i] == 0.0 and pattern != '0':
                 print("Warning: The pattern was forced to be '0' since the angle is 0.")
                 pattern = '0'
@@ -506,14 +508,14 @@ def check_supercell222(write_poscars=False):
                    [1, 0.5, 2], [0, 1, 0.5], [1, 0.5, 0.5], [1, 0.5, 2], [1, 1, 0.5]]
 
     for distortion, angles, correct_num in zip(Glazer_list, angles_list, correct_space_group_numbers):
-        tilt_patterns = [entry for entry in distortion[1::2]]
+        tilt_pattern = [entry for entry in distortion[1::2]]
 
-        obj.rotate_octahedra(angles=angles, tilt_patterns=tilt_patterns)
+        obj.rotate_octahedra(angles=angles, tilt_pattern=tilt_pattern)
         syminfo, _, _, _ = obj.get_symmetrized_structure()
         if write_poscars:
             obj.write_vasp_poscar("%s.POSCAR.vasp" % distortion, to_primitive=to_primitive)
         print("%s %d " % (syminfo['international'],
-                         len(syminfo['rotations']) / int(round(np.linalg.det(syminfo['transformation_matrix'])))),
+                          len(syminfo['rotations']) / int(round(np.linalg.det(syminfo['transformation_matrix'])))),
               end='')
         if syminfo['number'] == correct_num:
             print("Pass")
@@ -521,5 +523,50 @@ def check_supercell222(write_poscars=False):
             print("Fail")
 
 
+def generate_distorted_structure(elements, bond_length, angles, tilt_pattern, outfile):
+    obj = DistortPerovskite(elements=elements, bond_length=bond_length)
+    obj.rotate_octahedra(angles=angles, tilt_pattern=tilt_pattern)
+    obj.write_vasp_poscar(outfile, to_primitive=True)
+
+
 if __name__ == '__main__':
-    check_supercell222()
+
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument('--elements',
+                        type=str, default="Sr Ti O",
+                        help="Element names of 'A B X' that forms the ABX3 perovskite.")
+
+    parser.add_argument('--angles',
+                        type=str, default="0 0 0",
+                        help="Rotation angles around x, y, and z axes in unit of degree.\n"
+                             "The angle should as small as ~1. \n"
+                             "Too large values may lead to unexpected results.")
+
+    parser.add_argument('--tilt_pattern',
+                        type=str, default="000",
+                        help="Tilting pattern in the Glazer notation such as '0++' and '---'.")
+
+    parser.add_argument('--bond_length',
+                        type=float, default=2.0,
+                        help="Distance of the B-X bond length in Angstrom.")
+
+    parser.add_argument('-o', '--outfile',
+                        metavar='out.POSCAR.vasp', default='out.POSCAR.vasp',
+                        help="File name of the output in the VASP POSCAR format.")
+
+    parser.add_argument('--test', action="store_true", dest="run_test", default=False,
+                        help="Run test instead of generating the output file.")
+
+    args = parser.parse_args()
+    if args.run_test:
+        check_supercell222()
+    else:
+        elements = [item for item in args.elements.split()]
+        angles = [float(item) for item in args.angles.split()]
+        tilt_pattern = [item for item in args.tilt_pattern]
+        generate_distorted_structure(elements,
+                                     args.bond_length,
+                                     angles,
+                                     tilt_pattern,
+                                     args.outfile)
