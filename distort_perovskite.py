@@ -1,9 +1,8 @@
-# import argparse
-import spglib
-import numpy as np
-import math
-import copy
 import collections
+import copy
+import math
+import numpy as np
+import spglib
 
 
 class DistortPerovskite(object):
@@ -70,10 +69,8 @@ class DistortPerovskite(object):
 
         self._build_primitivecell()
         self._build_supercell()
-#        self._build_network()
         self._kvecs = None
         self._distorted_supercell = None
-
 
     def _build_primitivecell(self):
 
@@ -150,28 +147,6 @@ class DistortPerovskite(object):
                     self._supercell['cartesian_coordinates'].append(np.dot(fractional_coordinate, lattice_vector))
 
     @staticmethod
-    def get_rotation_matrix(axis='z', angle=5.0):
-
-        angle_rad = math.pi * angle / 180.0
-
-        if axis == 'x':
-            rotmat = np.array([[1.0, 0.0, 0.0],
-                               [0.0, math.cos(angle_rad), -math.sin(angle_rad)],
-                               [0.0, math.sin(angle_rad), math.cos(angle_rad)]])
-        elif axis == 'y':
-            rotmat = np.array([[math.cos(angle_rad), 0.0, math.sin(angle_rad)],
-                               [0.0, 1.0, 0.0],
-                               [-math.sin(angle_rad), 0.0, math.cos(angle_rad)]])
-        elif axis == 'z':
-            rotmat = np.array([[math.cos(angle_rad), -math.sin(angle_rad), 0.0],
-                               [math.sin(angle_rad), math.cos(angle_rad), 0.0],
-                               [0.0, 0.0, 1.0]])
-        else:
-            raise RuntimeError("Invalid rotation axis %s" % axis)
-
-        return rotmat
-
-    @staticmethod
     def get_rotation_matrix_around_axis(axis_vector, angle=5.0):
 
         angle_rad = math.pi * angle / 180.0
@@ -197,26 +172,21 @@ class DistortPerovskite(object):
 
         return rotmat
 
-    def rotate_single_octahedron(self, angles):
+    def get_rotation_matrix(self, axis='z', angle=1.0):
 
-        if len(angles) != 3:
-            raise RuntimeError("The angles must be an array with 3 elements.")
+        if axis == 'x':
+            rotmat = self.get_rotation_matrix_around_axis(np.array([1.0, 0.0, 0.0]), angle)
 
-        rot_x = self.get_rotation_matrix('x', angles[0])
-        rot_y = self.get_rotation_matrix('y', angles[1])
-        rot_z = self.get_rotation_matrix('z', angles[2])
-        rotation_matrix = np.dot(rot_x, np.dot(rot_y, rot_z))
-        rotation_matrix2 = np.dot(rot_z, np.dot(rot_y, rot_x))
+        elif axis == 'y':
+            rotmat = self.get_rotation_matrix_around_axis(np.array([0.0, 1.0, 0.0]), angle)
 
-        for entry in self._cartesian_coordinate[2:]:
-            rotated_entry = np.dot(entry, rotation_matrix.transpose())
-            rotated_entry2 = np.dot(entry, rotation_matrix2.transpose())
+        elif axis == 'z':
+            rotmat = self.get_rotation_matrix_around_axis(np.array([0.0, 0.0, 1.0]), angle)
 
-            print(rotated_entry)
-            print(rotated_entry2)
+        else:
+            raise RuntimeError("Invalid rotation axis %s" % axis)
 
-        print(rotation_matrix)
-        print(rotation_matrix2)
+        return rotmat
 
     def rotate_octahedra(self, angles, tilt_patterns):
 
@@ -255,12 +225,11 @@ class DistortPerovskite(object):
 
         self._distorted_supercell \
             = {'lattice_vector': new_lattice_vector,
-                'shifts': self._supercell['shifts'],
-                'fractional_coordinates': new_fractional_coordinates[:,:self._nat_primitive,:],
-                'cartesian_coordinates': new_cartesian_coordinates[:,:self._nat_primitive,:]}
+               'shifts': self._supercell['shifts'],
+               'fractional_coordinates': new_fractional_coordinates[:, :self._nat_primitive, :],
+               'cartesian_coordinates': new_cartesian_coordinates[:, :self._nat_primitive, :]}
 
-
-    def _get_displacements(self, rigid=True, basis='F', rodrigues=False):
+    def _get_displacements(self, rigid=True, basis='F'):
         """Generate displacements in supercell
 
         This method computes the displacements in the supercell associated with
@@ -290,45 +259,21 @@ class DistortPerovskite(object):
                 pos_now = copy.deepcopy(self._cartesian_coordinate)
 
             pos_new = np.zeros((nat, 3))
+            disp_now = np.zeros((nat, 3, 3))
 
-            if rodrigues:
-
-                disp_now = np.zeros((nat, 3))
-
-                omegavec = self._distorsion_angles[:]
-                norm_omegavec = np.sqrt(np.dot(omegavec, omegavec))
-                normalized_omegavec = omegavec / norm_omegavec
-
-                rotmat = self.get_rotation_matrix_around_axis(normalized_omegavec, norm_omegavec).transpose()
-
+            for iax, axis in enumerate(rotation_axes):
+                rotmat = self.get_rotation_matrix(axis,
+                                                  self._distorsion_angles[iax]).transpose()
                 for i in range(2):
                     pos_new[i, :] = pos_now[i, :]
                 for i in range(2, nat):
-                    pos_new[i, :] = np.dot(pos_new[i, :], rotmat)
+                    pos_new[i, :] = np.dot(pos_now[i, :], rotmat)
+                disp_now[:, :, iax] = pos_new - pos_now
+                pos_now[:, :] = pos_new[:, :]
 
-                disp_now[:, :] = pos_new - pos_now
-
-                # how to handle this part?
-                # for ishift, entry in enumerate(self.get_supercell()['shifts']):
-                #     disp_super[:, :, ishift] += disp_now[:, :] \
-                #                                 * math.cos(math.pi * np.dot(entry, self._kvecs[iax]))
-
-            else:
-                disp_now = np.zeros((nat, 3, 3))
-
-                for iax, axis in enumerate(rotation_axes):
-                    rotmat = self.get_rotation_matrix(axis,
-                                                      self._distorsion_angles[iax]).transpose()
-                    for i in range(2):
-                        pos_new[i, :] = pos_now[i, :]
-                    for i in range(2, nat):
-                        pos_new[i, :] = np.dot(pos_now[i, :], rotmat)
-                    disp_now[:, :, iax] = pos_new - pos_now
-                    pos_now[:, :] = pos_new[:, :]
-
-                    for ishift, entry in enumerate(self.get_supercell()['shifts']):
-                        disp_super[ishift, :, :] += disp_now[:, :, iax] \
-                                                     * math.cos(math.pi * np.dot(entry, self._kvecs[iax]))
+                for ishift, entry in enumerate(self.get_supercell()['shifts']):
+                    disp_super[ishift, :, :] += disp_now[:, :, iax] \
+                                                * math.cos(math.pi * np.dot(entry, self._kvecs[iax]))
 
         else:
             for iax, axis in enumerate(rotation_axes):
@@ -353,6 +298,12 @@ class DistortPerovskite(object):
         return disp_super
 
     def _adjust_network(self, disp_orig):
+        """Adjust positions after individual rotations of octahedra
+
+           After the rotations of all BX6 octahedra, the connectivity of the
+           octahedral network is lost. This method attempts to adjust the positions
+           so that the network is recovered.
+        """
 
         # Brute force way to match the vertex sites
 
@@ -365,7 +316,8 @@ class DistortPerovskite(object):
         for index_centercell in range(len(self._supercell['cartesian_coordinates'])):
 
             for idirec, shift_neighbor in enumerate(neighbor_lists):
-                lattice_tranlation_adjacent = lattice_translation_array[index_centercell] + shift_neighbor
+                lattice_tranlation_adjacent \
+                    = lattice_translation_array[index_centercell] + shift_neighbor
 
                 index_adjacent_cell = None
 
@@ -383,9 +335,9 @@ class DistortPerovskite(object):
 
                 shifted_cartesian[index_adjacent_cell, :, :] -= xshift
 
-        terminal_lattice_x = np.array([self._cellsize[0]-1, 0, 0])
-        terminal_lattice_y = np.array([0, self._cellsize[1]-1, 0])
-        terminal_lattice_z = np.array([0, 0, self._cellsize[2]-1])
+        terminal_lattice_x = np.array([self._cellsize[0] - 1, 0, 0])
+        terminal_lattice_y = np.array([0, self._cellsize[1] - 1, 0])
+        terminal_lattice_z = np.array([0, 0, self._cellsize[2] - 1])
 
         index_terminal = []
 
@@ -422,12 +374,13 @@ class DistortPerovskite(object):
         lattice = supercell['lattice_vector']
         xfrac = np.reshape(supercell['fractional_coordinates'], (len(elems), 3))
         cell = (lattice, xfrac, elems)
-        syminfo = spglib.get_spacegroup(cell, symprec=self._symprec)
+        dataset = spglib.get_symmetry_dataset(cell, symprec=self._symprec)
+
         lattice, scaled_positions, numbers = spglib.standardize_cell(cell,
                                                                      to_primitive=to_primitive,
                                                                      no_idealize=False,
                                                                      symprec=self._symprec)
-        return syminfo, lattice, scaled_positions, numbers
+        return dataset, lattice, scaled_positions, numbers
 
     def write_vasp_poscar(self, fname, to_primitive=False):
 
@@ -438,7 +391,7 @@ class DistortPerovskite(object):
 
         with open(fname, 'w') as f:
 
-            f.write("%s %s\n" % (syminfo, formula))
+            f.write("%s %s\n" % (syminfo['international'], formula))
             f.write("1.000\n")
             for i in range(3):
                 for j in range(3):
@@ -478,107 +431,41 @@ class DistortPerovskite(object):
         return self._supercell
 
 
-def check_supercell222():
-
+def check_supercell222(write_poscars=False):
+    # Generate all 15 inequivalent distortion types and check if the generated structure
+    # holds the expected space group.
     # To pass all checks, the rotation angles must be small but should not be too small
     # because the symmetry finder may think the structure is undistorted with the
     # current value of symprec.
 
     obj = DistortPerovskite(elements=['La', 'Ni', 'O'], bond_length=1.93, cellsize=[2, 2, 2])
     to_primitive = True
-    # a0a0a0 (#221)
-    obj.rotate_octahedra(angles=[0, 0, 0], tilt_patterns=['0', '0', '0'])
-    syminfo, _, _, _ = obj.get_symmetrized_structure()
-    obj.write_vasp_poscar("a0a0a0.POSCAR.vasp", to_primitive=to_primitive)
-    print(syminfo)
 
-    # a0a0c+ (#127)
-    obj.rotate_octahedra(angles=[0, 0, 1], tilt_patterns=['0', '0', '+'])
-    syminfo, _, _, _ = obj.get_symmetrized_structure()
-    obj.write_vasp_poscar("a0a0c+.POSCAR.vasp", to_primitive=to_primitive)
+    Glazer_list = ["a0a0a0", "a0a0c+", "a0b+b+", "a+a+a+", "a+b+c+",
+                   "a0a0c-", "a0b-b-", "a-a-a-", "a0b-c-", "a-b-b-",
+                   "a-b-c-", "a0b+c-", "a+b-b-", "a+b-c-", "a+a+c-"]
+    correct_space_group_numbers = [221, 127, 139, 204, 71,
+                                   140, 74, 167, 12, 15,
+                                   2, 63, 62, 11, 137]
+    angles_list = [[0, 0, 0], [0, 0, 1], [0, 1, 1], [1, 1, 1], [1, 0.5, 2],
+                   [0, 0, 1], [0, 1, 1], [1, 1, 1], [0, 0.5, 1], [1, 0.5, 0.5],
+                   [1, 0.5, 2], [0, 1, 0.5], [1, 0.5, 0.5], [1, 0.5, 2], [1, 1, 0.5]]
 
-    print(syminfo)
+    for distortion, angles, correct_num in zip(Glazer_list, angles_list, correct_space_group_numbers):
+        tilt_patterns = [entry for entry in distortion[1::2]]
 
-    # a0b+b+ (#139)
-    obj.rotate_octahedra(angles=[0, 1, 1], tilt_patterns=['0', '+', '+'])
-    syminfo, _, _, _ = obj.get_symmetrized_structure()
-    obj.write_vasp_poscar("a0b+b+.POSCAR.vasp", to_primitive=to_primitive)
+        obj.rotate_octahedra(angles=angles, tilt_patterns=tilt_patterns)
+        syminfo, _, _, _ = obj.get_symmetrized_structure()
+        if write_poscars:
+            obj.write_vasp_poscar("%s.POSCAR.vasp" % distortion, to_primitive=to_primitive)
+        print("%s %d " % (syminfo['international'],
+                         len(syminfo['rotations']) / int(round(np.linalg.det(syminfo['transformation_matrix'])))),
+              end='')
+        if syminfo['number'] == correct_num:
+            print("Pass")
+        else:
+            print("Fail")
 
-    print(syminfo)
-
-    # a+a+a+ (#204)
-    obj.rotate_octahedra(angles=[1, 1, 1], tilt_patterns=['+', '+', '+'])
-    syminfo, _, _, _ = obj.get_symmetrized_structure()
-    obj.write_vasp_poscar("a+a+a+.POSCAR.vasp", to_primitive=to_primitive)
-    print(syminfo)
-
-    # a+b+c+ (#71)
-    obj.rotate_octahedra(angles=[1, 0.5, 2], tilt_patterns=['+', '+', '+'])
-    syminfo, _, _, _ = obj.get_symmetrized_structure()
-    obj.write_vasp_poscar("a+b+c+.POSCAR.vasp", to_primitive=to_primitive)
-    print(syminfo)
-
-    # a0a0c- (#140)
-    obj.rotate_octahedra(angles=[0, 0, 1], tilt_patterns=['0', '0', '-'])
-    syminfo, _, _, _ = obj.get_symmetrized_structure()
-    obj.write_vasp_poscar("a0a0c-.POSCAR.vasp", to_primitive=to_primitive)
-    print(syminfo)
-
-    # a0b-b- (#74)
-    obj.rotate_octahedra(angles=[0, 1, 1], tilt_patterns=['0', '-', '-'])
-    syminfo, _, _, _ = obj.get_symmetrized_structure()
-    obj.write_vasp_poscar("a0b-b-.POSCAR.vasp", to_primitive=to_primitive)
-    print(syminfo)
-
-    # a-a-a- (#167)
-    obj.rotate_octahedra(angles=[1, 1, 1], tilt_patterns=['-', '-', '-'])
-    syminfo, _, _, _ = obj.get_symmetrized_structure()
-    obj.write_vasp_poscar("a-a-a-.POSCAR.vasp", to_primitive=to_primitive)
-    print(syminfo)
-
-    # a0b-c- (#12)
-    obj.rotate_octahedra(angles=[0, 0.5, 1], tilt_patterns=['0', '-', '-'])
-    syminfo, _, _, _ = obj.get_symmetrized_structure()
-    obj.write_vasp_poscar("a0b-c-.POSCAR.vasp", to_primitive=to_primitive)
-    print(syminfo)
-
-    # a-b-b- (#15)
-    obj.rotate_octahedra(angles=[1, 0.5, 0.5], tilt_patterns=['-', '-', '-'])
-    syminfo, _, _, _ = obj.get_symmetrized_structure()
-    obj.write_vasp_poscar("a-b-b-.POSCAR.vasp", to_primitive=to_primitive)
-    print(syminfo)
-
-    # a-b-c- (#2)
-    obj.rotate_octahedra(angles=[1, 0.5, 2], tilt_patterns=['-', '-', '-'])
-    syminfo, _, _, _ = obj.get_symmetrized_structure()
-    obj.write_vasp_poscar("a-b-c-.POSCAR.vasp", to_primitive=to_primitive)
-    print(syminfo)
-
-    # a0b+c- (#63)
-    obj.rotate_octahedra(angles=[0, 1, 0.5], tilt_patterns=['0', '+', '-'])
-    syminfo, _, _, _ = obj.get_symmetrized_structure()
-    obj.write_vasp_poscar("a0b+c-.POSCAR.vasp", to_primitive=to_primitive)
-    print(syminfo)
-
-    # a+b-b- (#62)
-    obj.rotate_octahedra(angles=[1, 0.5, 0.5], tilt_patterns=['+', '-', '-'])
-    syminfo, _, _, _ = obj.get_symmetrized_structure()
-    obj.write_vasp_poscar("a+b-b-.POSCAR.vasp", to_primitive=to_primitive)
-    print(syminfo)
-
-    # a+b-c- (#11)
-    obj.rotate_octahedra(angles=[1, 0.5, 2], tilt_patterns=['+', '-', '-'])
-    syminfo, _, _, _ = obj.get_symmetrized_structure()
-    obj.write_vasp_poscar("a+b-c-.POSCAR.vasp", to_primitive=to_primitive)
-    print(syminfo)
-
-    # a+a+c- (#137)
-    obj.rotate_octahedra(angles=[1, 1, 0.5], tilt_patterns=['+', '+', '-'])
-    syminfo, _, _, _ = obj.get_symmetrized_structure()
-    obj.write_vasp_poscar("a+a+c-.POSCAR.vasp", to_primitive=to_primitive)
-    print(syminfo)
 
 if __name__ == '__main__':
-
     check_supercell222()
-
