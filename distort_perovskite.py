@@ -6,7 +6,23 @@ import spglib
 
 
 class DistortPerovskite(object):
+    """Generate structure of distorted perovskite ABX3
 
+    Parameters
+    ----------
+    elements: list[str]
+      The list of element names. For example, setting
+      elements=['Sr', 'Ti', 'O'] generates structures of SrTiO3.
+      The length of list should be 3.
+
+    bond_length: float
+      The bond length of B-X in unit of Angstrom.
+
+    cellsize: list[int]
+      Defines the supercell size.
+      Currently, only cellsize=[2,2,2] is supported.
+      The length of list should be 3.
+    """
     def __init__(self,
                  elements=None,
                  bond_length=2.0,
@@ -18,7 +34,10 @@ class DistortPerovskite(object):
         if cellsize is None:
             cellsize = [2, 2, 2]
 
-        self._distorsion_angles = None
+        if cellsize != [2, 2, 2]:
+            raise RuntimeError("Sorry, only 2x2x2 supercell is supported currently.")
+
+        self._distortion_angles = None
         self._elements = elements
         self._bond_length = bond_length
         self._structure_type = None
@@ -189,6 +208,35 @@ class DistortPerovskite(object):
         return rotmat
 
     def rotate_octahedra(self, angles, tilt_patterns):
+        """Rotate BX6 octahedra and subsequently adjust the positions to
+        recover the connectivity of the octahedral network.
+
+        Parameters
+        ----------
+        angles: list[float]
+          The rotation angles along x, y, z axes defined by
+          `angles` = [omega_x, omega_y, omega_z]. The unit of angles is degree.
+          The angles should be as small as ~1; otherwise, the distorted structure
+          may not hold the expected space group symmetry.
+
+        tilt_patterns: list[str]
+          The array defining the tilting pattern. If the Glazer notation is "a-a-a-",
+          `tilt_patterns` should be ['-', '-', '-']. Each element of tilt_patterns
+          should be either '0', '+', or '-'.
+
+        Notes
+        -----
+        When an entry of `angles` is 0, the corresponding element in `tilt_patterns`
+        is forced to be '0'. Conversely, when an entry of `tilt_patterns` is '0',
+        the corresponding entry in `angles` is forced to be 0.
+
+        Examples
+        --------
+        > obj = DistortPerovskite(elements=['Sr', 'Ti', 'O'], bond_length=1.95)
+        > obj.rotate_octahedra(angles=[1, 1, 1], tilt_patterns=['-', '-', '-']) # a-a-a-
+        > obj.rotate_octahedra(angles=[0, 1, 1], tilt_patterns=['0', '-', '-']) # a0b-b-
+        > obj.rotate_octahedra(angles=[1, 0.5, 2], tilt_patterns=['+', '-', '-']) # a+b-c-
+        """
 
         if len(angles) != 3 or len(tilt_patterns) != 3:
             raise RuntimeError("The number of entries of angles and tilt_patterns must be 3.")
@@ -215,7 +263,7 @@ class DistortPerovskite(object):
 
             self._kvecs.append(np.array(kvec_tmp))
 
-        self._distorsion_angles = angles
+        self._distortion_angles = angles
 
         disp = self._get_displacements(basis='C')
 
@@ -230,22 +278,28 @@ class DistortPerovskite(object):
                'cartesian_coordinates': new_cartesian_coordinates[:, :self._nat_primitive, :]}
 
     def _get_displacements(self, rigid=True, basis='F'):
-        """Generate displacements in supercell
+        """Generate displacements in supercell associated with rotational operations
 
         This method computes the displacements in the supercell associated with
-        the pure rotations around x, y, and z axes.
-        Assuming that the rotational
+        the pure rotations around x, y, and z axes. Assuming that the rotational
         angle is small, we consider the rotations in three axes independently
         and take the summation of the displacements at the end.
-        :param rigid: If true, perform rigid rotation in 3D. If false,
-                      the rotation in three axes are performed independently
-                      and the final displacements are summed.
-        :type rigid: bool
-        :param basis: If basis = 'F', the rotation with performed in the fractional
-                      coordinate of the primitive lattice.
-                      If basis = 'C', the rotation will be done in the Cartesian coordinate.
-        :type basis: str
-        :return: The displacements in the supercell in the input coordinate
+
+        Parameters
+        ----------
+        rigid: bool
+          If true, perform rigid rotation in 3D. If false, the rotation in three axes
+          are performed independently and the final displacements are summed.
+
+        basis: str
+          If basis = 'F', the rotation with performed in the fractional coordinate
+          of the primitive lattice.
+          If basis = 'C', the rotation will be done in the Cartesian coordinate.
+
+        Returns
+        -------
+        Array of float
+          The displacements in the supercell in the input coordinate.
         """
 
         disp_super = np.zeros((len(self._supercell['shifts']), len(self._cartesian_coordinate), 3))
@@ -263,7 +317,7 @@ class DistortPerovskite(object):
 
             for iax, axis in enumerate(rotation_axes):
                 rotmat = self.get_rotation_matrix(axis,
-                                                  self._distorsion_angles[iax]).transpose()
+                                                  self._distortion_angles[iax]).transpose()
                 for i in range(2):
                     pos_new[i, :] = pos_now[i, :]
                 for i in range(2, nat):
@@ -277,7 +331,7 @@ class DistortPerovskite(object):
 
         else:
             for iax, axis in enumerate(rotation_axes):
-                rotmat = self.get_rotation_matrix(axis, self._distorsion_angles[iax]).transpose()
+                rotmat = self.get_rotation_matrix(axis, self._distortion_angles[iax]).transpose()
 
                 if basis == 'F':
                     pos_new = copy.deepcopy(self._fractional_coordinate)
