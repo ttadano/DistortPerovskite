@@ -270,8 +270,8 @@ class DistortPerovskite(object):
         disp = self._get_displacements(basis='C')
 
         new_lattice_vector, \
-        new_cartesian_coordinates, \
-        new_fractional_coordinates = self._adjust_network(disp)
+            new_cartesian_coordinates, \
+            new_fractional_coordinates = self._adjust_network(disp)
 
         self._distorted_supercell \
             = {'lattice_vector': new_lattice_vector,
@@ -476,12 +476,12 @@ class DistortPerovskite(object):
 
     def get_original_structure(self):
         return self._lattice_vector, \
-               self._element_nums, \
-               self._fractional_coordinate
+            self._element_nums, \
+            self._fractional_coordinate
 
     def get_distorted_structure(self):
         return self._distorted_supercell, self._element_nums * \
-               self._cellsize[0] * self._cellsize[1] * self._cellsize[2]
+                                          self._cellsize[0] * self._cellsize[1] * self._cellsize[2]
 
     def get_supercell(self):
         return self._supercell
